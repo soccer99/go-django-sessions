@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/soccer99/go-django-sessions/session"
+	sessions "github.com/soccer99/go-django-sessions"
 )
 
 // User is a simplified user representation
@@ -73,7 +73,7 @@ func djangoSessionMiddleware() fiber.Handler {
 		}
 
 		// Decode the session
-		sessionData, err := session.DecodeSession(sessionData, session.SessionOptions{
+		sessionData, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
 			SecretKey: secretKey,
 		})
 		if err != nil {

@@ -30,33 +30,27 @@ import (
     "fmt"
     "log"
 
-    "github.com/soccer99/go-django-sessions/session"
+    sessions "github.com/soccer99/go-django-sessions"
 )
 
 func main() {
     // Session data from django_sessions table
     sessionData := "your_session_data_here"
 
-    sessionInfo, err := session.DecodeSession(sessionData, session.SessionOptions{
+    sessionData, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
         SecretKey: "your_django_secret_key",
     })
     if err != nil {
         log.Fatalf("Failed to decode session: %v", err)
     }
 
-    // Access the session data as a map
-    sessionMap, ok := sessionInfo.(map[string]interface{})
-    if !ok {
-        log.Fatalf("Session data is not a map as expected")
-    }
-
     // Extract the auth user ID
-    if authUserID, exists := sessionMap["_auth_user_id"]; exists {
+    if authUserID, exists := sessionData["_auth_user_id"]; exists {
         fmt.Printf("Authenticated user ID: %v\n", authUserID)
     }
 
     // Print all session data
-    fmt.Printf("%+v\n", sessionMap)
+    fmt.Printf("%+v\n", sessionData)
     // Output:
     // map[_auth_user_backend:django.contrib.auth.backends.ModelBackend _auth_user_hash:test _auth_user_id:1 test:test]
 }
@@ -72,7 +66,7 @@ import (
     "fmt"
     "net/http"
 
-    "github.com/soccer99/go-django-sessions/session"
+    sessions "github.com/soccer99/go-django-sessions"
 )
 
 func djangoSessionMiddleware(next http.Handler) http.Handler {
@@ -93,7 +87,7 @@ func djangoSessionMiddleware(next http.Handler) http.Handler {
         }
 
         // Decode the session
-        sessionInfo, err := session.DecodeSession(sessionData, session.SessionOptions{
+        sessionData, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
             SecretKey: "your_django_secret_key",
         })
         if err != nil {
@@ -102,7 +96,7 @@ func djangoSessionMiddleware(next http.Handler) http.Handler {
         }
 
         // Add the session to request context
-        ctx := context.WithValue(r.Context(), "djangoSession", sessionInfo)
+        ctx := context.WithValue(r.Context(), "djangoSession", sessionData)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
 }
@@ -142,18 +136,6 @@ type SessionOptions struct {
 ### Environment Variables
 
 - `DJANGO_SECRET_KEY`: Your Django project's secret key. This can be used instead of passing the key in options.
-
-## Helper Functions
-
-The library provides some additional helper functions to make working with Django sessions easier:
-
-```go
-// Extract the auth user ID directly
-userID, err := session.GetAuthUserID(sessionInfo)
-if err != nil {
-    log.Fatalf("Failed to get auth user ID: %v", err)
-}
-```
 
 ## Contributing
 
