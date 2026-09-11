@@ -1,3 +1,8 @@
+//go:build ignore
+
+// Gin example. Run:
+//   go get github.com/gin-gonic/gin && go run examples/gin.go
+
 package main
 
 import (
@@ -7,7 +12,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	"github.com/soccer99/go-django-sessions/session"
+	sessions "github.com/soccer99/go-django-sessions"
 )
 
 // User is a simplified user representation
@@ -75,22 +80,13 @@ func DjangoSessionMiddleware() gin.HandlerFunc {
 		}
 
 		// Decode the session
-		sessionInfo, err := session.DecodeSession(sessionData, session.SessionOptions{
+		sessionMap, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
 			SecretKey: secretKey,
 		})
 		if err != nil {
 			log.Printf("Session decode error: %v", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid session",
-			})
-			return
-		}
-
-		// Extract session info
-		sessionMap, ok := sessionInfo.(map[string]interface{})
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Invalid session format",
 			})
 			return
 		}

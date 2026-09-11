@@ -1,3 +1,8 @@
+//go:build ignore
+
+// Fiber example. Run:
+//   go get github.com/gofiber/fiber/v2 && go run examples/fiber.go
+
 package main
 
 import (
@@ -73,7 +78,7 @@ func djangoSessionMiddleware() fiber.Handler {
 		}
 
 		// Decode the session
-		sessionData, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
+		session, err := sessions.DecodeSession(sessionData, sessions.SessionOptions{
 			SecretKey: secretKey,
 		})
 		if err != nil {
@@ -84,7 +89,7 @@ func djangoSessionMiddleware() fiber.Handler {
 		}
 
 		// Check if user is authenticated
-		authUserID, exists := sessionData["_auth_user_id"]
+		authUserID, exists := session["_auth_user_id"]
 		if !exists {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Not authenticated",
@@ -112,7 +117,7 @@ func djangoSessionMiddleware() fiber.Handler {
 
 		// Add user to context for route handlers
 		c.Locals("user", user)
-		c.Locals("djangoSession", sessionMap)
+		c.Locals("djangoSession", session)
 
 		return c.Next()
 	}

@@ -1,0 +1,11 @@
+# Go
+*.test
+*.out
+
+# Python (uv helper for tests)
+__pycache__/
+.venv/
+
+# Local tool state
+.claude/settings.local.json
+.omc/

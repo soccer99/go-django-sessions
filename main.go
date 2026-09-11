@@ -1,1 +1,0 @@
-package go_django_sessions

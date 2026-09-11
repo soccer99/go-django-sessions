@@ -1,3 +1,5 @@
+// Package go_django_sessions encodes and decodes Django session data.
+// It supports django.contrib.sessions with the default JSON serializer.
 package go_django_sessions
 
 import (
@@ -12,120 +14,147 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
+	"unicode/utf16"
 )
 
+// DefaultSalt is the salt that the Django SessionStore uses to sign session data.
 const DefaultSalt = "django.contrib.sessions.SessionStore"
 
-// SessionOptions contains configuration options for the decoder
+// ErrInvalidSignature is the error that DecodeSession returns when the signature does not match.
+var ErrInvalidSignature = errors.New("invalid signature")
+
+// SessionOptions holds the settings for EncodeSession and DecodeSession.
 type SessionOptions struct {
+	// SecretKey is the Django SECRET_KEY.
+	// If it is empty, the library reads the DJANGO_SECRET_KEY environment variable.
 	SecretKey string
-	Salt      string
+	// Salt is the signing salt. If it is empty, the library uses DefaultSalt.
+	Salt string
 }
 
-// calculateSignature computes the HMAC signature for Django session data
-func calculateSignature(value, key, salt string) (string, error) {
-	keyData := []byte(fmt.Sprintf("%ssigner%s", salt, key))
-	keyHash := sha256.Sum256(keyData)
+func (o SessionOptions) resolve() (key, salt string, err error) {
+	key = o.SecretKey
+	if key == "" {
+		key = os.Getenv("DJANGO_SECRET_KEY")
+	}
+	if key == "" {
+		return "", "", errors.New("no secret key: set SessionOptions.SecretKey or DJANGO_SECRET_KEY")
+	}
+	salt = o.Salt
+	if salt == "" {
+		salt = DefaultSalt
+	}
+	return key, salt, nil
+}
 
+// signature calculates the same HMAC-SHA256 signature as django.core.signing.Signer.
+func signature(value, key, salt string) string {
+	keyHash := sha256.Sum256([]byte(salt + "signer" + key))
 	h := hmac.New(sha256.New, keyHash[:])
 	h.Write([]byte(value))
-	signature := h.Sum(nil)
-
-	base64Sig := base64.StdEncoding.EncodeToString(signature)
-	// Replace characters for URL safety, similar to Django's base64 handling
-	base64Sig = strings.ReplaceAll(base64Sig, "+", "-")
-	base64Sig = strings.ReplaceAll(base64Sig, "/", "_")
-	base64Sig = strings.ReplaceAll(base64Sig, "=", "")
-
-	return base64Sig, nil
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
-// decodeBase64 decodes a modified base64 string (with URL-safe characters)
-func decodeBase64(s string) ([]byte, error) {
-	// Split at colon if present (format used in the original code)
-	parts := strings.SplitN(s, ":", 2)
-	s = parts[0]
-
-	// Add padding if needed
-	mod := len(s) % 4
-	if mod != 0 {
-		s += strings.Repeat("=", 4-mod)
+// DecodeSession checks the signature of a session_data string and returns the session data.
+// The string comes from the django_session table.
+// JSON numbers become float64 values.
+func DecodeSession(sessionData string, options SessionOptions) (map[string]any, error) {
+	key, salt, err := options.resolve()
+	if err != nil {
+		return nil, err
 	}
 
-	// Convert URL-safe characters back to standard base64
-	s = strings.ReplaceAll(s, "-", "+")
-	s = strings.ReplaceAll(s, "_", "/")
+	i := strings.LastIndex(sessionData, ":")
+	if i < 0 {
+		return nil, ErrInvalidSignature
+	}
+	value, sig := sessionData[:i], sessionData[i+1:]
+	if !hmac.Equal([]byte(sig), []byte(signature(value, key, salt))) {
+		return nil, ErrInvalidSignature
+	}
 
-	return base64.StdEncoding.DecodeString(s)
+	// Remove the TimestampSigner timestamp. Django also ignores it. The expiry is in expire_date.
+	if i := strings.LastIndex(value, ":"); i >= 0 {
+		value = value[:i]
+	}
+
+	compressed := strings.HasPrefix(value, ".")
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, "."))
+	if err != nil {
+		return nil, err
+	}
+	if compressed {
+		r, err := zlib.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		if data, err = io.ReadAll(r); err != nil {
+			return nil, err
+		}
+	}
+
+	var result map[string]any
+	return result, json.Unmarshal(data, &result)
 }
 
-// verifyAndExtractData checks the signature and returns the data portion
-func verifyAndExtractData(signedValue, key, salt string) (string, error) {
-	lastColon := strings.LastIndex(signedValue, ":")
-	if lastColon == -1 {
-		return "", errors.New("no signature delimiter found")
-	}
-
-	value := signedValue[:lastColon]
-	signature := signedValue[lastColon+1:]
-	expectedSignature, err := calculateSignature(value, key, salt)
+// EncodeSession converts session data to a signed string that Django can read.
+// The output has the same format as SessionStore.encode.
+func EncodeSession(data map[string]any, options SessionOptions) (string, error) {
+	key, salt, err := options.resolve()
 	if err != nil {
 		return "", err
 	}
 
-	if signature != expectedSignature {
-		return "", errors.New("invalid signature")
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return "", err
 	}
+	raw = asciiJSON(raw)
 
-	return value, nil
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	zw.Write(raw)
+	zw.Close()
+
+	value := base64.RawURLEncoding.EncodeToString(raw)
+	if zbuf.Len() < len(raw)-1 { // Django uses the same limit.
+		value = "." + base64.RawURLEncoding.EncodeToString(zbuf.Bytes())
+	}
+	value += ":" + b62(time.Now().Unix())
+	return value + ":" + signature(value, key, salt), nil
 }
 
-// DecodeSession decodes a Django session and returns the data as an interface{}
-func DecodeSession(sessionData string, options SessionOptions) (map[string]string, error) {
-	secretKey := options.SecretKey
-	if secretKey == "" {
-		secretKey = os.Getenv("DJANGO_SECRET_KEY")
-		if secretKey == "" {
-			return nil, errors.New("no secret key provided. Pass it in the options param under key 'SecretKey' or set DJANGO_SECRET_KEY environment variable")
+// asciiJSON replaces non-ASCII characters with JSON escape sequences.
+// This is the same as Python json.dumps with ensure_ascii=True.
+// Django reads session JSON as latin-1. Raw UTF-8 bytes would become incorrect characters.
+func asciiJSON(b []byte) []byte {
+	var out strings.Builder
+	for _, r := range string(b) {
+		switch {
+		case r < 0x80:
+			out.WriteRune(r)
+		case r < 0x10000:
+			fmt.Fprintf(&out, `\u%04x`, r)
+		default:
+			hi, lo := utf16.EncodeRune(r)
+			fmt.Fprintf(&out, `\u%04x\u%04x`, hi, lo)
 		}
 	}
+	return []byte(out.String())
+}
 
-	salt := options.Salt
-	if salt == "" {
-		salt = DefaultSalt
+const b62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+// b62 encodes a non-negative integer in the same base-62 format as django.core.signing.b62_encode.
+func b62(n int64) string {
+	if n == 0 {
+		return "0"
 	}
-
-	value, err := verifyAndExtractData(sessionData, secretKey, salt)
-	if err != nil {
-		return nil, err
+	var s []byte
+	for ; n > 0; n /= 62 {
+		s = append([]byte{b62Alphabet[n%62]}, s...)
 	}
-
-	isCompressed := strings.HasPrefix(value, ".")
-	b64Data := value
-	if isCompressed {
-		b64Data = value[1:]
-	}
-
-	data, err := decodeBase64(b64Data)
-	if err != nil {
-		return nil, err
-	}
-
-	if isCompressed {
-		reader, err := zlib.NewReader(bytes.NewReader(data))
-		if err != nil {
-			return nil, err
-		}
-		defer reader.Close()
-
-		decompressed, err := io.ReadAll(reader)
-		if err != nil {
-			return nil, err
-		}
-		data = decompressed
-	}
-
-	var result map[string]string
-	err = json.Unmarshal(data, &result)
-	return result, err
+	return string(s)
 }
