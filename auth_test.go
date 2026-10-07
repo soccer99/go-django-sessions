@@ -160,3 +160,72 @@ func TestMiddleware(t *testing.T) {
 		})
 	}
 }
+
+func TestBackendUserLoaders(t *testing.T) {
+	for _, name := range []string{"allauth", "custom", "unregistered", "disabled", "rejected", "storage error", "bad hash", "inactive", "override"} {
+		t.Run(name, func(t *testing.T) {
+			a, record, user, data := authFixture(t)
+			backend := "project.auth.Backend"
+			if name == "allauth" {
+				backend = AllauthBackend
+			}
+			if name == "override" {
+				backend = ModelBackend
+			}
+			data["_auth_user_backend"] = backend
+			a.AuthenticationBackends = []string{backend}
+			called := false
+			storageErr := errors.New("backend storage unavailable")
+			if name != "allauth" && name != "unregistered" {
+				a.LoadUser = nil
+				a.BackendUserLoaders = map[string]func(context.Context, string) (*AuthUser, error){
+					backend: func(ctx context.Context, id string) (*AuthUser, error) {
+						called = true
+						if id != user.ID {
+							t.Fatalf("unexpected id: %s", id)
+						}
+						if name == "rejected" {
+							return nil, nil
+						}
+						if name == "storage error" {
+							return nil, storageErr
+						}
+						return user, nil
+					},
+				}
+			}
+			if name == "disabled" {
+				a.AuthenticationBackends = []string{"another.Backend"}
+			}
+			if name == "bad hash" {
+				data["_auth_user_hash"] = "wrong"
+			}
+			if name == "inactive" {
+				user.IsActive = false
+			}
+			var err error
+			record.Data, err = EncodeSession(data, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, err := a.Authenticate(context.Background(), testSessionKey)
+			switch name {
+			case "allauth", "custom", "override":
+				if err != nil || identity == nil || identity.UserID != user.ID {
+					t.Fatalf("%v %v", identity, err)
+				}
+			case "storage error":
+				if identity != nil || !errors.Is(err, storageErr) {
+					t.Fatalf("%v %v", identity, err)
+				}
+			default:
+				if identity != nil || !errors.Is(err, ErrUnauthenticated) {
+					t.Fatalf("%v %v", identity, err)
+				}
+			}
+			if name == "disabled" && called {
+				t.Fatal("disabled backend loader called")
+			}
+		})
+	}
+}

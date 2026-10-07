@@ -163,7 +163,7 @@ logout/deletion, the current user, or password changes. Use `Authenticator` for
 protected routes. It performs three checks:
 
 1. Load the current session row and require `expire_date` to be in the future.
-2. Require authentication fields, an enabled `ModelBackend`, and a current active user.
+2. Require authentication fields, an enabled supported backend, and a current active user.
 3. Compare `_auth_user_hash` with Django's hash of the current encoded password field
    and `SECRET_KEY`, in constant time. Password changes invalidate older sessions.
 
@@ -296,12 +296,40 @@ The `net/http` middleware sends 401 for an invalid login and 500 for configurati
 errors, and never invokes the protected handler on failure. Framework adapters follow the
 same behavior. No password or decoded session map is attached to the handler identity.
 
+### Additional authentication backends
+
+`Authenticator` supports `sessions.ModelBackend` and `sessions.AllauthBackend`
+(`allauth.account.auth_backends.AuthenticationBackend`) through `LoadUser`.
+For PostPrint, include `sessions.AllauthBackend` in `AuthenticationBackends`, matching
+Django's configuration. No extra loader is needed for allauth's inherited user lookup.
+
+Register other backend paths explicitly:
+
+```go
+auth.BackendUserLoaders = map[string]func(context.Context, string) (*sessions.AuthUser, error){
+    "myproject.auth.CustomModelBackend": loadUser,
+    "myproject.auth.RestrictedBackend": loadRestrictedUser,
+}
+```
+
+Reuse `loadUser` only when the backend has the same user lookup and eligibility
+rules as ModelBackend. Otherwise the callback must mirror its Python `get_user`
+behavior, returning `nil, nil` for rejected users. Registration does not enable a
+backend: it must also appear in `AuthenticationBackends`. Unregistered backend
+paths are rejected. The active-user and default session-auth-hash checks always
+apply, including to custom loaders. Custom auth hashes or backends intentionally
+allowing inactive users need a separate integration. This registers session user
+lookup, not credential authentication or permission checks.
+
+`LoginManager` still writes ModelBackend sessions and requires ModelBackend to be
+configured; these additional backends apply to reading existing Django logins.
+
 ### Supported boundaries
 
 - Database-backed sessions (`django.contrib.sessions.backends.db`), default JSON serialization,
   standard 32-character lowercase alphanumeric session keys, and string user IDs.
-- `django.contrib.auth.backends.ModelBackend` and the default
-  `AbstractBaseUser.get_session_auth_hash()` implementation. Custom backends, custom auth hashes,
+- ModelBackend, allauth, and explicitly registered backend user loaders with the default
+  `AbstractBaseUser.get_session_auth_hash()` implementation. Custom auth hashes
   and other session stores require a separate integration, such as validation by Django.
 - Current `SECRET_KEY` only. Old-key signatures/hashes are rejected. This deliberately logs out
   old sessions after rotation; it does not implement `SECRET_KEY_FALLBACKS`, Django's fallback
