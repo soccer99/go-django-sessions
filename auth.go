@@ -11,8 +11,11 @@ import (
 	"time"
 )
 
-// ModelBackend is the supported Django authentication backend.
+// ModelBackend uses Django's standard active-user lookup.
 const ModelBackend = "django.contrib.auth.backends.ModelBackend"
+
+// AllauthBackend inherits ModelBackend's user lookup in django-allauth.
+const AllauthBackend = "allauth.account.auth_backends.AuthenticationBackend"
 
 // ErrUnauthenticated means the session does not represent a current login.
 var ErrUnauthenticated = errors.New("unauthenticated")
@@ -26,7 +29,7 @@ type SessionRecord struct {
 
 // AuthUser describes the current Django user. Password is the complete encoded
 // password field from the database, not the plaintext password. This API supports
-// AbstractBaseUser's default get_session_auth_hash and ModelBackend only.
+// AbstractBaseUser's default get_session_auth_hash.
 type AuthUser struct {
 	ID       string
 	Password string
@@ -48,8 +51,14 @@ type Authenticator struct {
 	LoadSession func(context.Context, string) (*SessionRecord, error)
 	LoadUser    func(context.Context, string) (*AuthUser, error)
 	// AuthenticationBackends must match Django's AUTHENTICATION_BACKENDS.
-	// Only ModelBackend is supported, even if other entries are configured.
 	AuthenticationBackends []string
+	// BackendUserLoaders registers additional backend paths. Each callback must
+	// mirror that backend's get_user lookup and eligibility rules, returning
+	// nil, nil for rejected or missing users. ModelBackend and AllauthBackend
+	// default to LoadUser; entries here override those defaults as well.
+	// All backends still require an active user and the default AbstractBaseUser
+	// session auth hash. For a compatible subclass, register LoadUser directly.
+	BackendUserLoaders map[string]func(context.Context, string) (*AuthUser, error)
 	// CookieName defaults to sessionid. Match Django's SESSION_COOKIE_NAME.
 	CookieName string
 }
@@ -73,8 +82,13 @@ func (a Authenticator) Authenticate(ctx context.Context, sessionKey string) (*Id
 	if err != nil {
 		return nil, err
 	}
-	if a.LoadSession == nil || a.LoadUser == nil || len(a.AuthenticationBackends) == 0 {
+	if a.LoadSession == nil || len(a.AuthenticationBackends) == 0 {
 		return nil, errors.New("authenticator requires session/user loaders and authentication backends")
+	}
+	for _, backend := range a.AuthenticationBackends {
+		if (backend == ModelBackend || backend == AllauthBackend) && a.BackendUserLoaders[backend] == nil && a.LoadUser == nil {
+			return nil, errors.New("authenticator requires a user loader for " + backend)
+		}
 	}
 	// Django generates 32-character lowercase alphanumeric database session keys.
 	if len(sessionKey) != 32 {
@@ -99,7 +113,7 @@ func (a Authenticator) Authenticate(ctx context.Context, sessionKey string) (*Id
 	userID, idOK := data["_auth_user_id"].(string)
 	backend, backendOK := data["_auth_user_backend"].(string)
 	sessionHash, hashOK := data["_auth_user_hash"].(string)
-	if !idOK || userID == "" || !backendOK || backend != ModelBackend || !hashOK || sessionHash == "" {
+	if !idOK || userID == "" || !backendOK || backend == "" || !hashOK || sessionHash == "" {
 		return nil, ErrUnauthenticated
 	}
 	enabled := false
@@ -112,7 +126,14 @@ func (a Authenticator) Authenticate(ctx context.Context, sessionKey string) (*Id
 	if !enabled {
 		return nil, ErrUnauthenticated
 	}
-	user, err := a.LoadUser(ctx, userID)
+	loadUser := a.BackendUserLoaders[backend]
+	if loadUser == nil && (backend == ModelBackend || backend == AllauthBackend) {
+		loadUser = a.LoadUser
+	}
+	if loadUser == nil {
+		return nil, ErrUnauthenticated
+	}
+	user, err := loadUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("load user: %w", err)
 	}
