@@ -1,51 +1,39 @@
-// Standard library example. Run:
-//
-//	go run ./examples
+// Standard library example. Run: go run ./examples
 package main
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 
 	sessions "github.com/soccer99/go-django-sessions"
 )
 
-type ctxKey struct{}
-
-// getSessionData reads the session_data column for a session key.
-// Replace this with a query on the django_session table.
-func getSessionData(sessionID string) string {
-	return ""
+// Replace these callbacks with current database reads; see README.md for SQL.
+// Missing records return nil, nil. Storage failures return an error.
+func loadSession(ctx context.Context, key string) (*sessions.SessionRecord, error) {
+	return nil, nil
 }
-
-// djangoSessionMiddleware checks the Django session cookie and puts the session in the context.
-func djangoSessionMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("sessionid")
-		if err != nil {
-			http.Error(w, "no session cookie", http.StatusUnauthorized)
-			return
-		}
-		raw := getSessionData(cookie.Value)
-		if raw == "" {
-			http.Error(w, "session not found", http.StatusUnauthorized)
-			return
-		}
-		session, err := sessions.DecodeSession(raw, sessions.SessionOptions{})
-		if err != nil {
-			http.Error(w, "invalid session", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, session)))
-	})
+func loadUser(ctx context.Context, id string) (*sessions.AuthUser, error) {
+	return nil, nil
 }
 
 func main() {
+	auth := sessions.Authenticator{
+		Options:                sessions.SessionOptions{}, // DJANGO_SECRET_KEY is required.
+		LoadSession:            loadSession,
+		LoadUser:               loadUser,
+		AuthenticationBackends: []string{sessions.ModelBackend},
+	}
+	log.Fatal(http.ListenAndServe(":8080", buildRouter(auth)))
+}
+
+func buildRouter(auth sessions.Authenticator) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/profile", func(w http.ResponseWriter, r *http.Request) {
-		session := r.Context().Value(ctxKey{}).(map[string]any)
-		fmt.Fprintf(w, "user id: %v\n", session["_auth_user_id"])
+	mux.HandleFunc("GET /api/profile", func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := sessions.IdentityFromContext(r.Context())
+		fmt.Fprintf(w, "user id: %s\n", identity.UserID)
 	})
-	http.ListenAndServe(":8080", djangoSessionMiddleware(mux))
+	return auth.Middleware(mux)
 }

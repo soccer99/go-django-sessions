@@ -1,0 +1,64 @@
+package main
+
+import (
+    "context"
+    "errors"
+    "net/http"
+    "net/http/httptest"
+    "strings"
+    "testing"
+    "time"
+
+    sessions "github.com/soccer99/go-django-sessions"
+)
+
+func TestProtectedRoutes(t *testing.T) {
+    for _, scenario := range []string{"valid", "missing cookie", "invalid key", "expired", "bad signature", "password changed", "inactive", "removed backend", "missing hash", "missing session", "deleted user", "storage failure", "user storage failure", "configuration failure"} {
+        t.Run(scenario, func(t *testing.T) {
+            user := &sessions.AuthUser{ID: "1", Password: "encoded-password", IsActive: true}
+            options := sessions.SessionOptions{SecretKey: "framework-test-secret"}
+            data := map[string]any{
+                "_auth_user_id": "1", "_auth_user_backend": sessions.ModelBackend,
+                "_auth_user_hash": sessions.SessionAuthHash(user.Password, options.SecretKey),
+            }
+            if scenario == "missing hash" { delete(data, "_auth_user_hash") }
+            raw, err := sessions.EncodeSession(data, options)
+            if err != nil { t.Fatal(err) }
+            row := &sessions.SessionRecord{Data: raw, ExpiresAt: time.Now().Add(time.Hour)}
+            auth := sessions.Authenticator{
+                Options: options, AuthenticationBackends: []string{sessions.ModelBackend},
+                LoadSession: func(context.Context, string) (*sessions.SessionRecord, error) { return row, nil },
+                LoadUser: func(context.Context, string) (*sessions.AuthUser, error) { return user, nil },
+            }
+            want := http.StatusUnauthorized
+            switch scenario {
+            case "valid": want = http.StatusOK
+            case "expired": row.ExpiresAt = time.Now().Add(-time.Second)
+            case "bad signature": row.Data += "x"
+            case "password changed": user.Password = "new-password"
+            case "inactive": user.IsActive = false
+            case "removed backend": auth.AuthenticationBackends = []string{"other.Backend"}
+            case "missing session": row = nil
+            case "deleted user": user = nil
+            case "storage failure":
+                auth.LoadSession = func(context.Context, string) (*sessions.SessionRecord, error) { return nil, errors.New("private database error") }
+                want = http.StatusInternalServerError
+            case "user storage failure":
+                auth.LoadUser = func(context.Context, string) (*sessions.AuthUser, error) { return nil, errors.New("private database error") }
+                want = http.StatusInternalServerError
+            case "configuration failure": auth.LoadUser = nil; want = http.StatusInternalServerError
+            }
+            req := httptest.NewRequest("GET", "/api/profile", nil)
+            if scenario != "missing cookie" {
+                key := "abcdefghijklmnopqrstuvwxyz012345"
+                if scenario == "invalid key" { key = "bad" }
+                req.AddCookie(&http.Cookie{Name: "sessionid", Value: key})
+            }
+            // FRAMEWORK_REQUEST
+            if status != want { t.Fatalf("status=%d want=%d body=%s", status, want, body) }
+            if strings.Contains(body, "private") || strings.Contains(body, "encoded-password") { t.Fatalf("leaked internal data: %s", body) }
+            if want == http.StatusOK && !strings.Contains(body, "1") { t.Fatalf("missing identity: %s", body) }
+            if want != http.StatusOK && strings.Contains(body, "user id:") { t.Fatalf("protected handler ran: %s", body) }
+        })
+    }
+}

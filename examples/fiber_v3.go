@@ -9,7 +9,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	sessions "github.com/soccer99/go-django-sessions"
 )
 
@@ -34,8 +34,8 @@ func main() {
 func buildRouter(auth sessions.Authenticator) *fiber.App {
 	app := fiber.New()
 	// Scope this middleware to protected routes only.
-	api := app.Group("/api", func(c *fiber.Ctx) error {
-		identity, err := auth.Authenticate(c.UserContext(), c.Cookies("sessionid"))
+	api := app.Group("/api", func(c fiber.Ctx) error {
+		identity, err := auth.Authenticate(c.Context(), c.Cookies("sessionid"))
 		if err != nil {
 			if errors.Is(err, sessions.ErrUnauthenticated) {
 				return c.Status(http.StatusUnauthorized).SendString("unauthenticated")
@@ -45,7 +45,7 @@ func buildRouter(auth sessions.Authenticator) *fiber.App {
 		c.Locals("djangoIdentity", identity)
 		return c.Next()
 	})
-	api.Get("/profile", func(c *fiber.Ctx) error {
+	api.Get("/profile", func(c fiber.Ctx) error {
 		identity := c.Locals("djangoIdentity").(*sessions.Identity)
 		return c.JSON(identity)
 	})

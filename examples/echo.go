@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 	sessions "github.com/soccer99/go-django-sessions"
 )
 
@@ -27,25 +27,15 @@ func main() {
 		LoadUser:               loadUser,
 		AuthenticationBackends: []string{sessions.ModelBackend},
 	}
-	log.Fatal(buildRouter(auth).Run(":8080"))
+	log.Fatal(buildRouter(auth).Start(":8080"))
 }
 
-func buildRouter(auth sessions.Authenticator) *gin.Engine {
-	router := gin.Default()
-	api := router.Group("/api", func(c *gin.Context) {
-		called := false
-		auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			called = true
-			c.Request = r
-			c.Next()
-		})).ServeHTTP(c.Writer, c.Request)
-		if !called {
-			c.Abort()
-		}
-	})
-	api.GET("/profile", func(c *gin.Context) {
-		identity, _ := sessions.IdentityFromContext(c.Request.Context())
-		c.JSON(http.StatusOK, identity)
+func buildRouter(auth sessions.Authenticator) *echo.Echo {
+	router := echo.New()
+	api := router.Group("/api", echo.WrapMiddleware(auth.Middleware))
+	api.GET("/profile", func(c echo.Context) error {
+		identity, _ := sessions.IdentityFromContext(c.Request().Context())
+		return c.JSON(http.StatusOK, identity)
 	})
 	return router
 }
