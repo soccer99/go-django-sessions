@@ -11,7 +11,6 @@ Decode and encode Django session data in Go, and authenticate database-backed Dj
 
 - Decodes the `session_data` column of the `django_session` table.
 - Encodes session data that Django can read.
-- Creates browser logins with session rotation, atomic PostgreSQL persistence, cookies, and CSRF rotation.
 - Supports compressed and uncompressed session data.
 - Authenticates current database sessions with expiry, backend/user, and authentication-hash checks.
 - Provides `net/http` middleware and examples for Gin, Echo, and Fiber v2/v3.
@@ -256,18 +255,6 @@ go test -race ./...
 go vet ./...
 python3 testdata/test_frameworks.py
 ```
-
-PostgreSQL integration tests live in a separate module so the library keeps zero
-third-party dependencies. They use a temporary table and run in CI against
-PostgreSQL 16. To run locally:
-
-```bash
-cd testdata/postgres
-DJANGO_TEST_POSTGRES_DSN='host=localhost user=postgres password=postgres dbname=postgres sslmode=disable' go test -v ./...
-```
-
-The Django tests also verify that Django recognizes a Go-created database login
-and rejects it after a password change.
 
 The Django tests need [uv](https://docs.astral.sh/uv/). They encode data in a real Django install and decode it in Go, and the reverse. They also compare authentication hashes and Go authentication decisions with Django's real database session store and `get_user()`. They run against Django 4.2, 5.2, and the latest release on PyPI. If `uv` is not installed, the tests skip the Django checks.
 
