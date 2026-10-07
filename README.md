@@ -195,8 +195,12 @@ api.GET("/profile", func(c echo.Context) error {
 Fiber uses its own request types. Call the same authenticator from its middleware:
 
 ```go
+cookieName := auth.CookieName
+if cookieName == "" {
+    cookieName = "sessionid"
+}
 api := app.Group("/api", func(c *fiber.Ctx) error { // v3: c fiber.Ctx
-    identity, err := auth.Authenticate(c.UserContext(), c.Cookies("sessionid")) // v3: c.Context()
+    identity, err := auth.Authenticate(c.UserContext(), c.Cookies(cookieName)) // v3: c.Context()
     if err != nil {
         if errors.Is(err, sessions.ErrUnauthenticated) {
             return c.Status(http.StatusUnauthorized).SendString("unauthenticated")

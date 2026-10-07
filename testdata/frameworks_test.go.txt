@@ -13,7 +13,7 @@ import (
 )
 
 func TestProtectedRoutes(t *testing.T) {
-    for _, scenario := range []string{"valid", "missing cookie", "invalid key", "expired", "bad signature", "password changed", "inactive", "removed backend", "missing hash", "missing session", "deleted user", "storage failure", "user storage failure", "configuration failure"} {
+    for _, scenario := range []string{"valid", "custom cookie", "missing cookie", "invalid key", "expired", "bad signature", "password changed", "inactive", "removed backend", "missing hash", "missing session", "deleted user", "storage failure", "user storage failure", "configuration failure"} {
         t.Run(scenario, func(t *testing.T) {
             user := &sessions.AuthUser{ID: "1", Password: "encoded-password", IsActive: true}
             options := sessions.SessionOptions{SecretKey: "framework-test-secret"}
@@ -33,6 +33,7 @@ func TestProtectedRoutes(t *testing.T) {
             want := http.StatusUnauthorized
             switch scenario {
             case "valid": want = http.StatusOK
+            case "custom cookie": auth.CookieName = "custom_session"; want = http.StatusOK
             case "expired": row.ExpiresAt = time.Now().Add(-time.Second)
             case "bad signature": row.Data += "x"
             case "password changed": user.Password = "new-password"
@@ -52,7 +53,9 @@ func TestProtectedRoutes(t *testing.T) {
             if scenario != "missing cookie" {
                 key := "abcdefghijklmnopqrstuvwxyz012345"
                 if scenario == "invalid key" { key = "bad" }
-                req.AddCookie(&http.Cookie{Name: "sessionid", Value: key})
+                cookieName := auth.CookieName
+                if cookieName == "" { cookieName = "sessionid" }
+                req.AddCookie(&http.Cookie{Name: cookieName, Value: key})
             }
             // FRAMEWORK_REQUEST
             if status != want { t.Fatalf("status=%d want=%d body=%s", status, want, body) }

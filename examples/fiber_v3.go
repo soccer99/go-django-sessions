@@ -33,9 +33,13 @@ func main() {
 
 func buildRouter(auth sessions.Authenticator) *fiber.App {
 	app := fiber.New()
+	cookieName := auth.CookieName
+	if cookieName == "" {
+		cookieName = "sessionid"
+	}
 	// Scope this middleware to protected routes only.
 	api := app.Group("/api", func(c fiber.Ctx) error {
-		identity, err := auth.Authenticate(c.Context(), c.Cookies("sessionid"))
+		identity, err := auth.Authenticate(c.Context(), c.Cookies(cookieName))
 		if err != nil {
 			if errors.Is(err, sessions.ErrUnauthenticated) {
 				return c.Status(http.StatusUnauthorized).SendString("unauthenticated")
