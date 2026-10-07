@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -127,6 +128,32 @@ func TestDjangoVersions(t *testing.T) {
 			}
 			if !reflect.DeepEqual(back, longData) {
 				t.Fatalf("Django decode of Go output: %v", back)
+			}
+		})
+	}
+}
+
+// This exercises a real django_session row and Django's get_user(), rather than
+// merely checking whether the JSON can be decoded.
+func TestDjangoRecognizesGoLogin(t *testing.T) {
+	for _, spec := range djangoVersions {
+		t.Run(spec, func(t *testing.T) {
+			m, s, user := testLoginManager()
+			key, err := m.Login(httptest.NewRecorder(), httptest.NewRequest("POST", "/login", nil), user)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result struct {
+				ID                  string `json:"id"`
+				Hash                string `json:"hash"`
+				AfterPasswordChange bool   `json:"after_password_change"`
+			}
+			out := runDjango(t, spec, "authenticate", key, s.rows[key].Data, user.Password)
+			if err = json.Unmarshal([]byte(out), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ID != user.ID || result.Hash != SessionAuthHash(user.Password, opts.SecretKey) || result.AfterPasswordChange {
+				t.Fatalf("Django rejected auth semantics: %+v", result)
 			}
 		})
 	}

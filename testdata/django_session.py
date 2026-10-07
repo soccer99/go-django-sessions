@@ -85,6 +85,27 @@ elif cmd == "encode":
     print(SessionStore().encode(json.loads(sys.argv[3])))
 elif cmd == "decode":
     print(json.dumps(SessionStore().decode(sys.argv[3])))
+elif cmd == "authenticate":
+    from django.core.management import call_command
+    from django.contrib.auth import get_user, get_user_model
+    from django.contrib.sessions.models import Session
+    from django.contrib.sessions.middleware import SessionMiddleware
+    from django.test import RequestFactory
+    from django.utils import timezone
+    from datetime import timedelta
 
+    call_command("migrate", verbosity=0)
+    user = get_user_model().objects.create(username="go-user", password=sys.argv[5])
+    Session.objects.create(session_key=sys.argv[3], session_data=sys.argv[4],
+                           expire_date=timezone.now() + timedelta(hours=1))
+    request = RequestFactory().get("/", HTTP_COOKIE="sessionid=" + sys.argv[3])
+    SessionMiddleware(lambda r: None).process_request(request)
+    authenticated = get_user(request)
+    initial_id = str(authenticated.pk) if authenticated.is_authenticated else None
+    expected_hash = user.get_session_auth_hash()
+    user.set_password("changed-password")
+    user.save()
+    after_change = get_user(request).is_authenticated
+    print(json.dumps({"id": initial_id, "hash": expected_hash, "after_password_change": after_change}))
 else:
     sys.exit("unknown command: " + cmd)
